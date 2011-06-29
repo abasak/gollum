@@ -15,6 +15,10 @@ module Precious
       def title
         "Home"
       end
+      
+      def refs
+        @branches.collect(&:name)
+      end
     end
   end
 end

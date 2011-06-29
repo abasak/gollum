@@ -1,0 +1,8 @@
+<div id="versionbar" style="float:left; padding:5px">
+  <label for="refs" style="font-weight:bold">Version:</label>
+  <select id="refs">
+    {{# refs }}
+      <option value="{{ to_s }}">{{ to_s }}</option>
+    {{/ refs }}
+  </select>
+</div>

@@ -37,6 +37,11 @@ module Precious
     configure :test do
       enable :logging, :raise_errors, :dump_errors
     end
+    
+    before do
+      @wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
+      @branches = @wiki.repo.branches
+    end
 
     get '/' do
       show_page_or_file('Home')
@@ -44,8 +49,8 @@ module Precious
 
     get '/edit/*' do
       @name = params[:splat].first
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      if page = wiki.page(@name)
+      
+      if page = @wiki.page(@name)
         @page = page
         @content = page.raw_data
         mustache :edit
@@ -55,16 +60,15 @@ module Precious
     end
 
     post '/edit/*' do
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      page = wiki.page(params[:splat].first)
+      page = @wiki.page(params[:splat].first)
       name = params[:rename] || page.name
-      committer = Gollum::Committer.new(wiki, commit_message)
+      committer = Gollum::Committer.new(@wiki, commit_message)
       commit    = {:committer => committer}
 
-      update_wiki_page(wiki, page, params[:content], commit, name,
+      update_wiki_page(@wiki, page, params[:content], commit, name,
         params[:format])
-      update_wiki_page(wiki, page.footer,  params[:footer],  commit) if params[:footer]
-      update_wiki_page(wiki, page.sidebar, params[:sidebar], commit) if params[:sidebar]
+      update_wiki_page(@wiki, page.footer,  params[:footer],  commit) if params[:footer]
+      update_wiki_page(@wiki, page.sidebar, params[:sidebar], commit) if params[:sidebar]
       committer.commit
 
       redirect "/#{CGI.escape(Gollum::Page.cname(name))}"
@@ -72,12 +76,11 @@ module Precious
 
     post '/create' do
       name = params[:page]
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
 
       format = params[:format].intern
 
       begin
-        wiki.write_page(name, format, params[:content], commit_message)
+        @wiki.write_page(name, format, params[:content], commit_message)
         redirect "/#{CGI.escape(name)}"
       rescue Gollum::DuplicatePageError => e
         @message = "Duplicate page: #{e.message}"
@@ -86,19 +89,19 @@ module Precious
     end
 
     post '/revert/:page/*' do
-      wiki  = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
+      # wiki  = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
       @name = params[:page]
-      @page = wiki.page(@name)
+      @page = @wiki.page(@name)
       shas  = params[:splat].first.split("/")
       sha1  = shas.shift
       sha2  = shas.shift
 
-      if wiki.revert_page(@page, sha1, sha2, commit_message)
+      if @wiki.revert_page(@page, sha1, sha2, commit_message)
         redirect "/#{CGI.escape(@name)}"
       else
         sha2, sha1 = sha1, "#{sha1}^" if !sha2
         @versions = [sha1, sha2]
-        diffs     = wiki.repo.diff(@versions.first, @versions.last, @page.path)
+        diffs     = @wiki.repo.diff(@versions.first, @versions.last, @page.path)
         @diff     = diffs.first
         @message  = "The patch does not apply."
         mustache :compare
@@ -106,9 +109,9 @@ module Precious
     end
 
     post '/preview' do
-      wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
+      # wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
       @name     = "Preview"
-      @page     = wiki.preview_page(@name, params[:content], params[:format])
+      @page     = @wiki.preview_page(@name, params[:content], params[:format])
       @content  = @page.formatted_data
       @editable = false
       mustache :page
@@ -116,8 +119,8 @@ module Precious
 
     get '/history/:name' do
       @name     = params[:name]
-      wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      @page     = wiki.page(@name)
+      @wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
+      @page     = @wiki.page(@name)
       @page_num = [params[:page].to_i, 1].max
       @versions = @page.versions :page => @page_num
       mustache :history
@@ -138,9 +141,9 @@ module Precious
     get '/compare/:name/:version_list' do
       @name     = params[:name]
       @versions = params[:version_list].split(/\.{2,3}/)
-      wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      @page     = wiki.page(@name)
-      diffs     = wiki.repo.diff(@versions.first, @versions.last, @page.path)
+      @wiki      = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
+      @page     = @wiki.page(@name)
+      diffs     = @wiki.repo.diff(@versions.first, @versions.last, @page.path)
       @diff     = diffs.first
       mustache :compare
     end
@@ -151,8 +154,7 @@ module Precious
 
     get %r{/(.+?)/([0-9a-f]{40})} do
       name = params[:captures][0]
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      if page = wiki.page(name, params[:captures][1])
+      if page = @wiki.page(name, params[:captures][1])
         @page = page
         @name = name
         @content = page.formatted_data
@@ -165,16 +167,15 @@ module Precious
 
     get '/search' do
       @query = params[:q]
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      @results = wiki.search @query
+      @results = @wiki.search @query
       @name = @query
       mustache :search
     end
 
     get '/pages' do
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      @results = wiki.pages
-      @ref = wiki.ref
+      
+      @results = @wiki.pages
+      @ref = @wiki.ref
       mustache :pages
     end
 
@@ -183,14 +184,14 @@ module Precious
     end
 
     def show_page_or_file(name)
-      wiki = Gollum::Wiki.new(settings.gollum_path, settings.wiki_options)
-      if page = wiki.page(name)
+      
+      if page = @wiki.page(name)
         @page = page
         @name = name
         @content = page.formatted_data
         @editable = true
         mustache :page
-      elsif file = wiki.file(name)
+      elsif file = @wiki.file(name)
         content_type file.mime_type
         file.raw_data
       else
